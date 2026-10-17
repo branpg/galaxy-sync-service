@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      
+      - name: Install Fyne dependencies
+        run: |
+          choco install mingw -y
+          
+      - name: Download dependencies
+        run: go mod download
+      
+      - name: Build Windows executable
+        run: |
+          go build -ldflags="-H windowsgui -s -w" -o galaxy-sync-service.exe .
+        env:
+          CGO_ENABLED: 1
+          CC: gcc
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: galaxy-sync-service.exe
+          draft: false
+          prerelease: false
+          generate_release_notes: true
