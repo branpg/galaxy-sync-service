@@ -13,6 +13,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/branpg/galaxy-sync-service/internal/config"
+	apperrors "github.com/branpg/galaxy-sync-service/internal/errors"
 	"github.com/branpg/galaxy-sync-service/internal/galaxy"
 	"github.com/branpg/galaxy-sync-service/internal/service"
 	"github.com/branpg/galaxy-sync-service/internal/sync"
@@ -64,11 +65,17 @@ func Run() {
 			if result.Success {
 				statusLabel.SetText(result.Message)
 			} else {
-				msg := result.Message
+				var userErr *apperrors.UserError
 				if result.Error != nil {
-					msg = fmt.Sprintf("%s: %v", msg, result.Error)
+					userErr = apperrors.Wrap(result.Error)
+				} else {
+					userErr = apperrors.New(result.Message, nil)
 				}
-				statusLabel.SetText(msg)
+				statusLabel.SetText(userErr.FormatForDisplay())
+				
+				if userErr.HasTechnicalDetails() {
+					showErrorDialog(w, userErr)
+				}
 			}
 			syncBtn.Enable()
 		}()
@@ -80,7 +87,7 @@ func Run() {
 		statusLabel.SetText("Reading database...")
 
 		go func() {
-			showDebugWindow(a, statusLabel)
+			showDebugWindow(a, w, statusLabel)
 			debugBtn.Enable()
 		}()
 	}
@@ -88,7 +95,7 @@ func Run() {
 	// Install button action
 	installBtn.OnTapped = func() {
 		if service.RequiresAdmin() {
-			dialog.ShowError(fmt.Errorf("Administrator privileges required.\nPlease run as administrator."), w)
+			showErrorDialog(w, apperrors.New("Administrator privileges required", fmt.Errorf("Please run as administrator to install the service")))
 			return
 		}
 
@@ -113,7 +120,7 @@ func Run() {
 
 				err := service.Install(interval)
 				if err != nil {
-					dialog.ShowError(err, w)
+					showErrorDialog(w, apperrors.Wrap(err))
 				} else {
 					dialog.ShowInformation("Success", "Service installed successfully", w)
 				}
@@ -124,7 +131,7 @@ func Run() {
 	// Uninstall button action
 	uninstallBtn.OnTapped = func() {
 		if service.RequiresAdmin() {
-			dialog.ShowError(fmt.Errorf("Administrator privileges required.\nPlease run as administrator."), w)
+			showErrorDialog(w, apperrors.New("Administrator privileges required", fmt.Errorf("Please run as administrator to uninstall the service")))
 			return
 		}
 
@@ -136,7 +143,7 @@ func Run() {
 
 				err := service.Uninstall()
 				if err != nil {
-					dialog.ShowError(err, w)
+					showErrorDialog(w, apperrors.Wrap(err))
 				} else {
 					dialog.ShowInformation("Success", "Service uninstalled successfully", w)
 				}
@@ -146,7 +153,7 @@ func Run() {
 
 	// Configure button action
 	configBtn.OnTapped = func() {
-		showConfigWindow(a, cfg, statusLabel)
+		showConfigWindow(a, w, cfg, statusLabel)
 	}
 
 	// Initial button state
@@ -180,7 +187,46 @@ func Run() {
 	w.ShowAndRun()
 }
 
-func showDebugWindow(a fyne.App, mainStatus *widget.Label) {
+// showErrorDialog shows a user-friendly error with option to save full log
+func showErrorDialog(parent fyne.Window, err *apperrors.UserError) {
+	if err == nil {
+		return
+	}
+
+	// Create dialog content
+	msgLabel := widget.NewLabel(err.FormatForDisplay())
+	msgLabel.Wrapping = fyne.TextWrapWord
+
+	var content fyne.CanvasObject
+
+	if err.HasTechnicalDetails() {
+		saveLogBtn := widget.NewButton("Save Error Log", func() {
+			logPath, saveErr := err.SaveLog()
+			if saveErr != nil {
+				dialog.ShowError(fmt.Errorf("Could not save log: %v", saveErr), parent)
+				return
+			}
+			dialog.ShowInformation("Log Saved", fmt.Sprintf("Error log saved to:\n%s", logPath), parent)
+			
+			// Open the folder containing the log
+			openFileLocation(logPath)
+		})
+
+		content = container.NewVBox(
+			msgLabel,
+			widget.NewSeparator(),
+			container.NewHBox(layout.NewSpacer(), saveLogBtn, layout.NewSpacer()),
+		)
+	} else {
+		content = msgLabel
+	}
+
+	d := dialog.NewCustom("Error", "Close", content, parent)
+	d.Resize(fyne.NewSize(400, 200))
+	d.Show()
+}
+
+func showDebugWindow(a fyne.App, parent fyne.Window, mainStatus *widget.Label) {
 	w := a.NewWindow("Debug - Database Contents")
 	w.Resize(fyne.NewSize(800, 600))
 
@@ -190,10 +236,29 @@ func showDebugWindow(a fyne.App, mainStatus *widget.Label) {
 	var content fyne.CanvasObject
 
 	if err != nil {
-		mainStatus.SetText(fmt.Sprintf("Error: %v", err))
+		userErr := apperrors.Wrap(err)
+		mainStatus.SetText(userErr.FormatForDisplay())
+		
+		// Create error view with save log option
+		msgLabel := widget.NewLabelWithStyle("Error reading database", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+		errorLabel := widget.NewLabel(userErr.FormatForDisplay())
+		errorLabel.Wrapping = fyne.TextWrapWord
+
+		saveLogBtn := widget.NewButton("Save Error Log", func() {
+			logPath, saveErr := userErr.SaveLog()
+			if saveErr != nil {
+				dialog.ShowError(fmt.Errorf("Could not save log: %v", saveErr), w)
+				return
+			}
+			dialog.ShowInformation("Log Saved", fmt.Sprintf("Error log saved to:\n%s", logPath), w)
+			openFileLocation(logPath)
+		})
+
 		content = container.NewVBox(
-			widget.NewLabelWithStyle("Error reading database", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
-			widget.NewLabel(err.Error()),
+			msgLabel,
+			errorLabel,
+			widget.NewSeparator(),
+			container.NewHBox(layout.NewSpacer(), saveLogBtn, layout.NewSpacer()),
 		)
 	} else {
 		mainStatus.SetText(fmt.Sprintf("Found %d games", len(library.Games)))
@@ -297,7 +362,7 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
-func showConfigWindow(a fyne.App, cfg *config.Config, mainStatus *widget.Label) {
+func showConfigWindow(a fyne.App, parent fyne.Window, cfg *config.Config, mainStatus *widget.Label) {
 	w := a.NewWindow("Configuration")
 	w.Resize(fyne.NewSize(500, 350))
 
@@ -334,12 +399,13 @@ func showConfigWindow(a fyne.App, cfg *config.Config, mainStatus *widget.Label) 
 				updateBranpgUI()
 				mainStatus.SetText(fmt.Sprintf("Connected as %s", result.Username))
 			} else {
-				dialog.ShowError(result.Error, w)
+				userErr := apperrors.Wrap(result.Error)
+				showErrorDialog(w, userErr)
 			}
 		})
 
 		if err != nil {
-			dialog.ShowError(err, w)
+			showErrorDialog(w, apperrors.Wrap(err))
 			return
 		}
 
@@ -373,13 +439,13 @@ func showConfigWindow(a fyne.App, cfg *config.Config, mainStatus *widget.Label) 
 	testBtn := widget.NewButton("Test Connection", func() {
 		url := urlEntry.Text
 		if url == "" {
-			dialog.ShowError(fmt.Errorf("Please enter a URL"), w)
+			showErrorDialog(w, apperrors.New("Please enter a URL", nil))
 			return
 		}
 
 		err := sync.TestEndpoint(url)
 		if err != nil {
-			dialog.ShowError(fmt.Errorf("Connection failed: %v", err), w)
+			showErrorDialog(w, apperrors.Wrap(err))
 		} else {
 			dialog.ShowInformation("Success", "Connection successful!", w)
 		}
@@ -424,7 +490,7 @@ func showConfigWindow(a fyne.App, cfg *config.Config, mainStatus *widget.Label) 
 
 		err := cfg.Save()
 		if err != nil {
-			dialog.ShowError(err, w)
+			showErrorDialog(w, apperrors.Wrap(err))
 			return
 		}
 
@@ -460,6 +526,21 @@ func openBrowser(url string) {
 		cmd = exec.Command("open", url)
 	default:
 		cmd = exec.Command("xdg-open", url)
+	}
+
+	cmd.Start()
+}
+
+func openFileLocation(path string) {
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("explorer", "/select,", path)
+	case "darwin":
+		cmd = exec.Command("open", "-R", path)
+	default:
+		cmd = exec.Command("xdg-open", path)
 	}
 
 	cmd.Start()

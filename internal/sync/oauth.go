@@ -317,7 +317,10 @@ func callbackSuccessHTML(username string) string {
 </html>`, username)
 }
 
-func callbackErrorHTML(title, message string) string {
+func callbackErrorHTML(title, technicalError string) string {
+	// Map technical errors to user-friendly messages
+	userMessage := categorizeErrorForHTML(technicalError)
+	
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -369,14 +372,36 @@ func callbackErrorHTML(title, message string) string {
             margin-bottom: 1rem;
             border-left: 3px solid #f43f5e;
         }
-        .error-title { color: #f87171; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.25rem; }
-        .error-message { color: #9ca3af; font-size: 0.875rem; word-break: break-word; }
+        .error-message { color: #d1d5db; font-size: 0.95rem; }
         .close-hint {
             color: #6b7280;
             font-size: 0.75rem;
             margin-top: 1rem;
             padding-top: 1rem;
             border-top: 1px solid #1f2937;
+        }
+        details {
+            margin-top: 1rem;
+            text-align: left;
+        }
+        summary {
+            color: #6b7280;
+            font-size: 0.75rem;
+            cursor: pointer;
+            padding: 0.5rem;
+        }
+        summary:hover { color: #9ca3af; }
+        .technical {
+            background: #0f172a;
+            border-radius: 0.375rem;
+            padding: 0.75rem;
+            margin-top: 0.5rem;
+            font-family: monospace;
+            font-size: 0.7rem;
+            color: #64748b;
+            word-break: break-all;
+            max-height: 150px;
+            overflow-y: auto;
         }
     </style>
 </head>
@@ -392,12 +417,40 @@ func callbackErrorHTML(title, message string) string {
         </div>
         <div class="content">
             <div class="error-box">
-                <div class="error-title">%s</div>
                 <div class="error-message">%s</div>
             </div>
-            <p class="close-hint">Puedes cerrar esta ventana</p>
+            <details>
+                <summary>Detalles técnicos</summary>
+                <div class="technical">%s</div>
+            </details>
+            <p class="close-hint">Puedes cerrar esta ventana e intentarlo de nuevo</p>
         </div>
     </div>
 </body>
-</html>`, title, message)
+</html>`, userMessage, technicalError)
+}
+
+func categorizeErrorForHTML(errStr string) string {
+	errLower := strings.ToLower(errStr)
+
+	if strings.Contains(errLower, "access_denied") {
+		return "Has cancelado la autorización."
+	}
+	if strings.Contains(errLower, "invalid_client") {
+		return "Error de configuración del cliente."
+	}
+	if strings.Contains(errLower, "csrf") {
+		return "Error de seguridad. Inténtalo de nuevo."
+	}
+	if strings.Contains(errLower, "token") && (strings.Contains(errLower, "invalid") || strings.Contains(errLower, "expired")) {
+		return "La sesión ha expirado. Inténtalo de nuevo."
+	}
+	if strings.Contains(errLower, "connection") || strings.Contains(errLower, "timeout") {
+		return "No se pudo conectar al servidor."
+	}
+	if strings.Contains(errLower, "not found") {
+		return "Recurso no encontrado en el servidor."
+	}
+
+	return "Ha ocurrido un error durante la conexión."
 }
