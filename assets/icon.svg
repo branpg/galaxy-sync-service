@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#7B2D8E;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#4A1259;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="syncGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#A855F7;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#EC4899;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="galaxyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#C084FC;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#818CF8;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="240" fill="url(#bgGrad)"/>
+  
+  <!-- Outer ring (galaxy orbit) -->
+  <circle cx="256" cy="256" r="180" fill="none" stroke="url(#galaxyGrad)" stroke-width="12" opacity="0.4"/>
+  
+  <!-- Inner galaxy spiral hint -->
+  <ellipse cx="256" cy="256" rx="120" ry="50" fill="none" stroke="url(#galaxyGrad)" stroke-width="8" transform="rotate(-20 256 256)" opacity="0.5"/>
+  <ellipse cx="256" cy="256" rx="80" ry="35" fill="none" stroke="url(#galaxyGrad)" stroke-width="6" transform="rotate(25 256 256)" opacity="0.4"/>
+  
+  <!-- Central star/core -->
+  <circle cx="256" cy="256" r="45" fill="url(#galaxyGrad)"/>
+  <circle cx="256" cy="256" r="30" fill="#FFFFFF" opacity="0.9"/>
+  
+  <!-- Sync arrows - top right -->
+  <g transform="translate(340, 120)">
+    <path d="M0,60 A60,60 0 0,1 60,0" fill="none" stroke="url(#syncGrad)" stroke-width="16" stroke-linecap="round"/>
+    <polygon points="55,-25 85,5 50,10" fill="url(#syncGrad)"/>
+  </g>
+  
+  <!-- Sync arrows - bottom left -->
+  <g transform="translate(172, 332)">
+    <path d="M60,0 A60,60 0 0,1 0,60" fill="none" stroke="url(#syncGrad)" stroke-width="16" stroke-linecap="round"/>
+    <polygon points="5,55 -25,85 -5,50" fill="url(#syncGrad)"/>
+  </g>
+  
+  <!-- Small stars/dots -->
+  <circle cx="150" cy="150" r="8" fill="#FFFFFF" opacity="0.7"/>
+  <circle cx="380" cy="300" r="6" fill="#FFFFFF" opacity="0.6"/>
+  <circle cx="200" cy="380" r="5" fill="#FFFFFF" opacity="0.5"/>
+  <circle cx="350" cy="180" r="7" fill="#FFFFFF" opacity="0.6"/>
+  <circle cx="130" cy="280" r="4" fill="#FFFFFF" opacity="0.4"/>
+</svg>

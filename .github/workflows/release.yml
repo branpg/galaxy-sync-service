@@ -23,13 +23,23 @@ jobs:
       - name: Install Fyne dependencies
         run: |
           choco install mingw -y
+          choco install imagemagick -y
+          
+      - name: Convert icon to ICO
+        run: |
+          magick convert assets/icon.svg -define icon:auto-resize=256,128,64,48,32,16 assets/icon.ico
+          magick convert assets/icon.svg -resize 256x256 assets/icon.png
+        shell: cmd
           
       - name: Download dependencies
         run: go mod download
       
-      - name: Build Windows executable
+      - name: Install fyne CLI
+        run: go install fyne.io/fyne/v2/cmd/fyne@latest
+      
+      - name: Build Windows executable with icon
         run: |
-          go build -ldflags="-H windowsgui -s -w" -o galaxy-sync-service.exe .
+          fyne package -os windows -icon assets/icon.png -name "Galaxy Sync Service"
         env:
           CGO_ENABLED: 1
           CC: gcc
@@ -37,7 +47,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: galaxy-sync-service.exe
+          files: |
+            "Galaxy Sync Service.exe"
           draft: false
           prerelease: false
           generate_release_notes: true
