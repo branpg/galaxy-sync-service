@@ -2,7 +2,6 @@ package galaxy
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,23 +11,32 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type Game struct {
-	ID                   int64     `json:"id"`
-	Title                string    `json:"title"`
-	AchievementsTotal    int       `json:"achievements_total"`
-	AchievementsUnlocked int       `json:"achievements_unlocked"`
-	PlaytimeMinutes      int       `json:"playtime_minutes"`
-	LastPlayed           time.Time `json:"last_played,omitempty"`
-}
+// RawLibrary contains minimally processed data from GOG Galaxy database.
+// Laravel handles all business logic (title lookup, status inference, etc.)
+type RawLibrary struct {
+	// OwnedIDs is the list of GOG game IDs the user owns
+	OwnedIDs []int64 `json:"owned_ids"`
 
-type Library struct {
-	Games    []Game    `json:"games"`
+	// WishlistIDs is the list of GOG game IDs in the user's wishlist
+	WishlistIDs []int64 `json:"wishlist_ids"`
+
+	// Playtime maps game ID to minutes played
+	Playtime map[int64]int `json:"playtime"`
+
+	// Achievements maps game ID to achievement counts
+	Achievements map[int64]AchievementData `json:"achievements"`
+
+	// LastPlayed maps game ID to last played timestamp (RFC3339)
+	LastPlayed map[int64]string `json:"last_played"`
+
+	// SyncedAt is when this data was extracted
 	SyncedAt time.Time `json:"synced_at"`
 }
 
-// titleJSON is used to parse the JSON title from GamePieces
-type titleJSON struct {
-	Title string `json:"title"`
+// AchievementData contains achievement counts for a game
+type AchievementData struct {
+	Unlocked int `json:"unlocked"`
+	Total    int `json:"total"`
 }
 
 func GetDatabasePath() (string, error) {
@@ -58,7 +66,7 @@ func GetDatabasePath() (string, error) {
 	return basePath, nil
 }
 
-func ReadLibrary() (*Library, error) {
+func ReadLibrary() (*RawLibrary, error) {
 	dbPath, err := GetDatabasePath()
 	if err != nil {
 		return nil, err
@@ -71,80 +79,175 @@ func ReadLibrary() (*Library, error) {
 	}
 	defer db.Close()
 
-	games, err := readGames(db)
-	if err != nil {
+	library := &RawLibrary{
+		OwnedIDs:     []int64{},
+		WishlistIDs:  []int64{},
+		Playtime:     make(map[int64]int),
+		Achievements: make(map[int64]AchievementData),
+		LastPlayed:   make(map[int64]string),
+		SyncedAt:     time.Now().UTC(),
+	}
+
+	// Read owned game IDs from local database
+	if err := readOwnedIDs(db, library); err != nil {
 		return nil, err
 	}
 
-	return &Library{
-		Games:    games,
-		SyncedAt: time.Now().UTC(),
-	}, nil
-}
-
-func readGames(db *sql.DB) ([]Game, error) {
-	// GOG Galaxy 2.0 schema:
-	// - LibraryReleases: list of owned games (releaseKey)
-	// - GamePieces: metadata including title (gamePieceTypeId=189 is title as JSON)
-	// - GameTimes: playtime per game
-	// - UserAchievements: achievement unlock status
-	query := `
-		SELECT DISTINCT
-			lr.releaseKey,
-			gp.value as titleJson,
-			COALESCE(gt.minutesInGame, 0) as playtime
-		FROM LibraryReleases lr
-		LEFT JOIN GamePieces gp ON gp.releaseKey = lr.releaseKey AND gp.gamePieceTypeId = 189
-		LEFT JOIN GameTimes gt ON gt.releaseKey = lr.releaseKey
-		WHERE lr.releaseKey LIKE 'gog_%'
-		ORDER BY gp.value
-	`
-
-	rows, err := db.Query(query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query games: %w", err)
-	}
-	defer rows.Close()
-
-	var games []Game
-	for rows.Next() {
-		var g Game
-		var releaseKey string
-		var titleJsonStr sql.NullString
-
-		if err := rows.Scan(&releaseKey, &titleJsonStr, &g.PlaytimeMinutes); err != nil {
-			continue
-		}
-
-		// Extract numeric ID from releaseKey (e.g., "gog_1234567890" -> 1234567890)
-		if _, err := fmt.Sscanf(releaseKey, "gog_%d", &g.ID); err != nil {
-			continue
-		}
-
-		// Parse title from JSON
-		if titleJsonStr.Valid && titleJsonStr.String != "" {
-			var tj titleJSON
-			if err := json.Unmarshal([]byte(titleJsonStr.String), &tj); err == nil {
-				g.Title = tj.Title
-			}
-		}
-		if g.Title == "" {
-			g.Title = releaseKey // Fallback to releaseKey if no title
-		}
-
-		// Get achievements for this game
-		g.AchievementsTotal, g.AchievementsUnlocked = readAchievements(db, releaseKey)
-
-		games = append(games, g)
-	}
-
-	if len(games) == 0 {
-		// If no games found, list available tables for debugging
+	if len(library.OwnedIDs) == 0 {
 		tables := listTables(db)
 		return nil, fmt.Errorf("no GOG games found in library. Available tables: %v", tables)
 	}
 
-	return games, nil
+	// Read playtime data
+	readPlaytime(db, library)
+
+	// Read achievement data
+	readAchievements(db, library)
+
+	// Read last played dates
+	readLastPlayed(db, library)
+
+	return library, nil
+}
+
+func readOwnedIDs(db *sql.DB, library *RawLibrary) error {
+	query := `
+		SELECT DISTINCT releaseKey
+		FROM LibraryReleases
+		WHERE releaseKey LIKE 'gog_%'
+	`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return fmt.Errorf("failed to query owned games: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var releaseKey string
+		if err := rows.Scan(&releaseKey); err != nil {
+			continue
+		}
+
+		var id int64
+		if _, err := fmt.Sscanf(releaseKey, "gog_%d", &id); err != nil {
+			continue
+		}
+
+		library.OwnedIDs = append(library.OwnedIDs, id)
+	}
+
+	return nil
+}
+
+func readPlaytime(db *sql.DB, library *RawLibrary) {
+	query := `
+		SELECT releaseKey, minutesInGame
+		FROM GameTimes
+		WHERE releaseKey LIKE 'gog_%' AND minutesInGame > 0
+	`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var releaseKey string
+		var minutes int
+
+		if err := rows.Scan(&releaseKey, &minutes); err != nil {
+			continue
+		}
+
+		var id int64
+		if _, err := fmt.Sscanf(releaseKey, "gog_%d", &id); err != nil {
+			continue
+		}
+
+		library.Playtime[id] = minutes
+	}
+}
+
+func readAchievements(db *sql.DB, library *RawLibrary) {
+	query := `
+		SELECT 
+			gameReleaseKey,
+			COUNT(*) as total,
+			SUM(CASE WHEN isUnlocked = 1 THEN 1 ELSE 0 END) as unlocked
+		FROM UserAchievements
+		WHERE gameReleaseKey LIKE 'gog_%'
+		GROUP BY gameReleaseKey
+	`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var releaseKey string
+		var total, unlocked sql.NullInt64
+
+		if err := rows.Scan(&releaseKey, &total, &unlocked); err != nil {
+			continue
+		}
+
+		var id int64
+		if _, err := fmt.Sscanf(releaseKey, "gog_%d", &id); err != nil {
+			continue
+		}
+
+		t, u := 0, 0
+		if total.Valid {
+			t = int(total.Int64)
+		}
+		if unlocked.Valid {
+			u = int(unlocked.Int64)
+		}
+
+		if t > 0 {
+			library.Achievements[id] = AchievementData{
+				Unlocked: u,
+				Total:    t,
+			}
+		}
+	}
+}
+
+func readLastPlayed(db *sql.DB, library *RawLibrary) {
+	query := `
+		SELECT gameReleaseKey, lastPlayedDate
+		FROM LastPlayedDates
+		WHERE gameReleaseKey LIKE 'gog_%'
+	`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var releaseKey string
+		var lastPlayed string
+
+		if err := rows.Scan(&releaseKey, &lastPlayed); err != nil {
+			continue
+		}
+
+		var id int64
+		if _, err := fmt.Sscanf(releaseKey, "gog_%d", &id); err != nil {
+			continue
+		}
+
+		// Only include valid dates (not empty or sentinel values)
+		if lastPlayed != "" && lastPlayed != "0001-01-01 00:00:00" {
+			library.LastPlayed[id] = lastPlayed
+		}
+	}
 }
 
 func listTables(db *sql.DB) []string {
@@ -162,31 +265,4 @@ func listTables(db *sql.DB) []string {
 		}
 	}
 	return tables
-}
-
-func readAchievements(db *sql.DB, releaseKey string) (total int, unlocked int) {
-	// UserAchievements table has achievement unlock status
-	// gameReleaseKey matches our releaseKey
-	query := `
-		SELECT 
-			COUNT(*) as total,
-			SUM(CASE WHEN isUnlocked = 1 THEN 1 ELSE 0 END) as unlocked
-		FROM UserAchievements
-		WHERE gameReleaseKey = ?
-	`
-
-	var t, u sql.NullInt64
-	err := db.QueryRow(query, releaseKey).Scan(&t, &u)
-	if err != nil {
-		return 0, 0
-	}
-
-	if t.Valid {
-		total = int(t.Int64)
-	}
-	if u.Valid {
-		unlocked = int(u.Int64)
-	}
-
-	return total, unlocked
 }
