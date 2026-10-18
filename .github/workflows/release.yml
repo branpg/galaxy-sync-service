@@ -32,16 +32,26 @@ jobs:
       
       - name: Build Windows executable with icon
         run: |
-          fyne package -os windows -icon assets/icon.png -name "Galaxy Sync Service"
+          fyne package -os windows -icon assets/icon.png -name "GalaxySyncService"
+          dir *.exe
         env:
           CGO_ENABLED: 1
           CC: gcc
       
+      - name: Rename executable
+        run: |
+          if (Test-Path "GalaxySyncService.exe") {
+            Move-Item "GalaxySyncService.exe" "Galaxy-Sync-Service.exe"
+          } elseif (Test-Path "galaxy-sync-service.exe") {
+            Move-Item "galaxy-sync-service.exe" "Galaxy-Sync-Service.exe"
+          }
+          dir *.exe
+        shell: pwsh
+      
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            "Galaxy Sync Service.exe"
+          files: Galaxy-Sync-Service.exe
           draft: false
           prerelease: false
           generate_release_notes: true
