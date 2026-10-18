@@ -77,8 +77,71 @@ func ReadLibrary() (*Library, error) {
 }
 
 func readGames(db *sql.DB) ([]Game, error) {
-	// Query to get GOG games with their details
-	// The schema may vary between Galaxy versions, so we handle errors gracefully
+	// Try multiple query strategies based on what tables exist
+	// GOG Galaxy schema varies between versions
+	
+	// Strategy 1: LibraryReleases table (newer Galaxy versions)
+	games, err := readGamesFromLibraryReleases(db)
+	if err == nil && len(games) > 0 {
+		return games, nil
+	}
+	
+	// Strategy 2: Products table with GameTimes
+	games, err = readGamesFromProducts(db)
+	if err == nil && len(games) > 0 {
+		return games, nil
+	}
+	
+	// Strategy 3: InstalledProducts/LicensedProducts union
+	games, err = readGamesFromInstalledProducts(db)
+	if err == nil && len(games) > 0 {
+		return games, nil
+	}
+	
+	// Strategy 4: Try to discover available tables and report
+	tables := listTables(db)
+	if len(tables) == 0 {
+		return nil, fmt.Errorf("failed to query games: database appears empty or inaccessible")
+	}
+	
+	return nil, fmt.Errorf("failed to query games: no compatible table found. Available tables: %v", tables)
+}
+
+func listTables(db *sql.DB) []string {
+	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err == nil {
+			tables = append(tables, name)
+		}
+	}
+	return tables
+}
+
+func readGamesFromLibraryReleases(db *sql.DB) ([]Game, error) {
+	query := `
+		SELECT DISTINCT
+			lr.releaseKey,
+			COALESCE(pd.title, lr.releaseKey) as title,
+			COALESCE(gt.minutesInGame, 0) as playtime,
+			gt.lastSessionEnd
+		FROM LibraryReleases lr
+		LEFT JOIN ProductsDetails pd ON pd.releaseKey = lr.releaseKey
+		LEFT JOIN GameTimes gt ON gt.releaseKey = lr.releaseKey
+		WHERE lr.releaseKey LIKE 'gog_%'
+		ORDER BY title
+	`
+	
+	return queryGamesWithPlaytime(db, query)
+}
+
+func readGamesFromProducts(db *sql.DB) ([]Game, error) {
 	query := `
 		SELECT 
 			p.releaseKey,
@@ -91,10 +154,13 @@ func readGames(db *sql.DB) ([]Game, error) {
 		ORDER BY p.title
 	`
 	
+	return queryGamesWithPlaytime(db, query)
+}
+
+func queryGamesWithPlaytime(db *sql.DB, query string) ([]Game, error) {
 	rows, err := db.Query(query)
 	if err != nil {
-		// Try alternative query structure
-		return readGamesAlternative(db)
+		return nil, err
 	}
 	defer rows.Close()
 	
@@ -128,25 +194,16 @@ func readGames(db *sql.DB) ([]Game, error) {
 	return games, nil
 }
 
-func readGamesAlternative(db *sql.DB) ([]Game, error) {
-	// Alternative query for different Galaxy DB versions
+func readGamesFromInstalledProducts(db *sql.DB) ([]Game, error) {
 	query := `
-		SELECT 
-			releaseKey,
-			title
-		FROM InstalledProducts
-		WHERE releaseKey LIKE 'gog_%'
+		SELECT releaseKey, title FROM InstalledProducts WHERE releaseKey LIKE 'gog_%'
 		UNION
-		SELECT 
-			releaseKey,
-			title  
-		FROM LicensedProducts
-		WHERE releaseKey LIKE 'gog_%'
+		SELECT releaseKey, title FROM LicensedProducts WHERE releaseKey LIKE 'gog_%'
 	`
 	
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query games: %w", err)
+		return nil, err
 	}
 	defer rows.Close()
 	
