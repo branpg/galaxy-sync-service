@@ -261,12 +261,11 @@ func showDebugWindow(a fyne.App, parent fyne.Window, mainStatus *widget.Label) {
 			container.NewHBox(layout.NewSpacer(), saveLogBtn, layout.NewSpacer()),
 		)
 	} else {
-		mainStatus.SetText(fmt.Sprintf("Found %d games", len(library.Games)))
+		mainStatus.SetText(fmt.Sprintf("Found %d games", len(library.OwnedIDs)))
 
 		// Create table header
-		header := container.NewGridWithColumns(5,
+		header := container.NewGridWithColumns(4,
 			widget.NewLabelWithStyle("ID", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-			widget.NewLabelWithStyle("Title", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 			widget.NewLabelWithStyle("Achievements", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
 			widget.NewLabelWithStyle("Playtime", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
 			widget.NewLabelWithStyle("Last Played", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
@@ -275,33 +274,43 @@ func showDebugWindow(a fyne.App, parent fyne.Window, mainStatus *widget.Label) {
 		// Create list of games
 		gameList := widget.NewList(
 			func() int {
-				return len(library.Games)
+				return len(library.OwnedIDs)
 			},
 			func() fyne.CanvasObject {
-				return container.NewGridWithColumns(5,
+				return container.NewGridWithColumns(4,
 					widget.NewLabel("ID"),
-					widget.NewLabel("Title"),
 					widget.NewLabel("Ach"),
 					widget.NewLabel("Time"),
 					widget.NewLabel("Date"),
 				)
 			},
 			func(i widget.ListItemID, o fyne.CanvasObject) {
-				game := library.Games[i]
+				gameID := library.OwnedIDs[i]
 				grid := o.(*fyne.Container)
 
-				grid.Objects[0].(*widget.Label).SetText(fmt.Sprintf("%d", game.ID))
-				grid.Objects[1].(*widget.Label).SetText(truncateString(game.Title, 40))
-				grid.Objects[2].(*widget.Label).SetText(fmt.Sprintf("%d/%d", game.AchievementsUnlocked, game.AchievementsTotal))
-
-				hours := game.PlaytimeMinutes / 60
-				mins := game.PlaytimeMinutes % 60
-				grid.Objects[3].(*widget.Label).SetText(fmt.Sprintf("%dh %dm", hours, mins))
-
-				if !game.LastPlayed.IsZero() {
-					grid.Objects[4].(*widget.Label).SetText(game.LastPlayed.Format("2006-01-02"))
+				grid.Objects[0].(*widget.Label).SetText(fmt.Sprintf("%d", gameID))
+				
+				// Achievements
+				if ach, ok := library.Achievements[gameID]; ok {
+					grid.Objects[1].(*widget.Label).SetText(fmt.Sprintf("%d/%d", ach.Unlocked, ach.Total))
 				} else {
-					grid.Objects[4].(*widget.Label).SetText("-")
+					grid.Objects[1].(*widget.Label).SetText("-")
+				}
+
+				// Playtime
+				if playtime, ok := library.Playtime[gameID]; ok {
+					hours := playtime / 60
+					mins := playtime % 60
+					grid.Objects[2].(*widget.Label).SetText(fmt.Sprintf("%dh %dm", hours, mins))
+				} else {
+					grid.Objects[2].(*widget.Label).SetText("-")
+				}
+
+				// Last played
+				if lastPlayed, ok := library.LastPlayed[gameID]; ok && lastPlayed != "" {
+					grid.Objects[3].(*widget.Label).SetText(lastPlayed[:10]) // Just the date part
+				} else {
+					grid.Objects[3].(*widget.Label).SetText("-")
 				}
 			},
 		)
@@ -315,15 +324,18 @@ func showDebugWindow(a fyne.App, parent fyne.Window, mainStatus *widget.Label) {
 		totalAchievements := 0
 		unlockedAchievements := 0
 		totalPlaytime := 0
-		for _, g := range library.Games {
-			totalAchievements += g.AchievementsTotal
-			unlockedAchievements += g.AchievementsUnlocked
-			totalPlaytime += g.PlaytimeMinutes
+		for _, ach := range library.Achievements {
+			totalAchievements += ach.Total
+			unlockedAchievements += ach.Unlocked
+		}
+		for _, playtime := range library.Playtime {
+			totalPlaytime += playtime
 		}
 
 		summaryLabel := widget.NewLabel(fmt.Sprintf(
-			"Total: %d games | Achievements: %d/%d | Playtime: %d hours",
-			len(library.Games),
+			"Total: %d games | Wishlist: %d | Achievements: %d/%d | Playtime: %d hours",
+			len(library.OwnedIDs),
+			len(library.WishlistIDs),
 			unlockedAchievements,
 			totalAchievements,
 			totalPlaytime/60,
@@ -353,13 +365,6 @@ func showDebugWindow(a fyne.App, parent fyne.Window, mainStatus *widget.Label) {
 	))
 
 	w.Show()
-}
-
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
 }
 
 func showConfigWindow(a fyne.App, parent fyne.Window, cfg *config.Config, mainStatus *widget.Label) {
