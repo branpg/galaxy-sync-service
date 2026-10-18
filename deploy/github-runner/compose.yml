@@ -1,0 +1,26 @@
+# Runner self-hosted de GitHub Actions para branpg/galaxy-sync-service.
+# Uso: cp .env.example .env && chmod 600 .env && docker compose up -d
+#
+# Este runner ejecuta tests de Go en Linux. La compilación de Windows
+# se mantiene en GitHub Actions (necesita Windows para Fyne/CGO).
+
+services:
+  runner:
+    image: myoung34/github-runner:ubuntu-noble
+    container_name: github-runner-galaxy-sync
+    restart: unless-stopped
+    environment:
+      REPO_URL: https://github.com/branpg/galaxy-sync-service
+      RUNNER_SCOPE: repo
+      RUNNER_NAME: homelab-galaxy
+      LABELS: homelab
+      ACCESS_TOKEN: ${ACCESS_TOKEN}
+      RUNNER_WORKDIR: /tmp/runner/work
+      DISABLE_AUTO_UPDATE: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
