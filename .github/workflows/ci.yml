@@ -21,12 +21,6 @@ jobs:
       - name: Install Fyne dependencies
         run: |
           choco install mingw -y
-          choco install imagemagick -y
-          
-      - name: Convert icon
-        run: |
-          magick convert assets/icon.svg -resize 256x256 assets/icon.png
-        shell: cmd
           
       - name: Download dependencies
         run: go mod download
